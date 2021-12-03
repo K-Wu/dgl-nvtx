@@ -5,6 +5,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import dgl.function as fn
 from dgl.nn.functional import edge_softmax
+import nvtx
 
 class HGTLayer(nn.Module):
     def __init__(self,
@@ -52,6 +53,7 @@ class HGTLayer(nn.Module):
 
         nn.init.xavier_uniform_(self.relation_att)
         nn.init.xavier_uniform_(self.relation_msg)
+
 
     def forward(self, G, h):
         with G.local_scope():
@@ -123,6 +125,7 @@ class HGT(nn.Module):
             self.gcs.append(HGTLayer(n_hid, n_hid, node_dict, edge_dict, n_heads, use_norm = use_norm))
         self.out = nn.Linear(n_hid, n_out)
 
+    @nvtx.annotate("forward", color="red")
     def forward(self, G, out_key):
         h = {}
         for ntype in G.ntypes:
