@@ -11,9 +11,11 @@ import math
 import numpy as np
 from model import *
 import argparse
+import nvtx
 
 torch.manual_seed(0)
 data_url = 'https://data.dgl.ai/dataset/ACM.mat'
+#data_file_path = r'D:\external-repos\dgl\examples\pytorch\hgt\ACM.mat'
 data_file_path = '/tmp/ACM.mat'
 
 urllib.request.urlretrieve(data_url, data_file_path)
@@ -51,9 +53,11 @@ def train(model, G):
         # The loss is computed only for labeled nodes.
         loss = F.cross_entropy(logits[train_idx], labels[train_idx].to(device))
         optimizer.zero_grad()
-        loss.backward()
-        torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
-        optimizer.step()
+        with nvtx.annotate("backward", color="purple"):
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
+        with nvtx.annotate("optimizer.step", color="purple"):
+            optimizer.step()
         train_step += 1
         scheduler.step(train_step)
         if epoch % 5 == 0:
