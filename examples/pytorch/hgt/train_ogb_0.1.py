@@ -33,6 +33,7 @@ parser.add_argument('--n_hid', type=int, default=256)
 parser.add_argument('--n_inp', type=int, default=256)
 parser.add_argument('--clip', type=int, default=1.0)
 parser.add_argument('--max_lr', type=float, default=1e-3)
+parser.add_argument('--multi_stream', type=bool, default=False)
 
 args = parser.parse_args()
 
@@ -170,14 +171,26 @@ for ntype in G.ntypes:
 
 G = G.to(device)
 
-model = HGT(G,
-            node_dict, edge_dict,
-            n_inp=args.n_inp,
-            n_hid=args.n_hid,
-            n_out=labels.max().item() + 1,
-            n_layers=2,
-            n_heads=4,
-            use_norm=True).to(device)
+if args.multi_stream:
+    print("multi-stream enabled!")
+    model = HGTMultiStream(G,
+                           node_dict, edge_dict,
+                           n_inp=args.n_inp,
+                           n_hid=args.n_hid,
+                           n_out=labels.max().item() + 1,
+                           n_layers=2,
+                           n_heads=4,
+                           use_norm=True).to(device)
+else:
+    print("multi-stream disabled!")
+    model = HGT(G,
+                node_dict, edge_dict,
+                n_inp=args.n_inp,
+                n_hid=args.n_hid,
+                n_out=labels.max().item() + 1,
+                n_layers=2,
+                n_heads=4,
+                use_norm=True).to(device)
 optimizer = torch.optim.AdamW(model.parameters())
 scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, total_steps=args.n_epoch, max_lr=args.max_lr)
 print('Training HGT with #param: %d' % (get_n_params(model)))
@@ -192,13 +205,24 @@ scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, total_steps=args.n_ep
 print('Training RGCN with #param: %d' % (get_n_params(model)))
 train(model, G)
 
-model = HGT(G,
-            node_dict, edge_dict,
-            n_inp=args.n_inp,
-            n_hid=args.n_hid,
-            n_out=labels.max().item() + 1,
-            n_layers=0,
-            n_heads=4).to(device)
+if args.multi_stream:
+    print("multi-stream enabled!")
+    model = HGTMultiStream(G,
+                           node_dict, edge_dict,
+                           n_inp=args.n_inp,
+                           n_hid=args.n_hid,
+                           n_out=labels.max().item() + 1,
+                           n_layers=0,
+                           n_heads=4).to(device)
+else:
+    print("multi-stream disabled!")
+    model = HGT(G,
+                node_dict, edge_dict,
+                n_inp=args.n_inp,
+                n_hid=args.n_hid,
+                n_out=labels.max().item() + 1,
+                n_layers=0,
+                n_heads=4).to(device)
 optimizer = torch.optim.AdamW(model.parameters())
 scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, total_steps=args.n_epoch, max_lr=args.max_lr)
 print('Training MLP with #param: %d' % (get_n_params(model)))
