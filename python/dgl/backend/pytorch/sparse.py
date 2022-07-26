@@ -4,6 +4,7 @@ from ...base import is_all, ALL
 from ...sparse import _gspmm, _gspmm_hetero, _gsddmm, _gsddmm_hetero, _segment_reduce, _bwd_segment_cmp
 from ...sparse import _csrmm, _csrsum, _csrmask, _scatter_add, _update_grad_minmax_hetero
 from ...heterograph_index import create_unitgraph_from_csr
+from ..._ffi import streams as dglstreams
 
 if LooseVersion(th.__version__) >= LooseVersion("1.6.0"):
     from torch.cuda.amp import custom_fwd, custom_bwd
@@ -321,50 +322,51 @@ class GSDDMM(th.autograd.Function):
     @staticmethod
     @custom_bwd
     def backward(ctx, dZ):
-        gidx, op, lhs_target, rhs_target, X_shape, Y_shape = ctx.backward_cache
-        ctx.backward_cache = None
-        X, Y = ctx.saved_tensors
-        if op != 'copy_rhs' and ctx.needs_input_grad[2]:
-            if lhs_target in ['u', 'v']:
-                _gidx = gidx if lhs_target == 'v' else gidx.reverse()
-                if op in ['add', 'copy_lhs']:
-                    dX = gspmm(_gidx, 'copy_rhs', 'sum', None, dZ)
-                else:  # mul, dot
-                    if rhs_target == lhs_target:
-                        dX = gspmm(_gidx, 'copy_rhs', 'sum', None, dZ) *  Y
-                    elif rhs_target == 'e':
-                        dX = gspmm(_gidx, 'copy_rhs', 'sum', None, dZ * Y)
-                    else:  # rhs_target = !lhs_target
-                        dX = gspmm(_gidx, 'mul', 'sum', Y, dZ)
-            else:  # lhs_target == 'e'
-                if op in ['add', 'copy_lhs']:
-                    dX = dZ
-                else:  # mul, dot
-                    dX = gsddmm(gidx, 'mul', dZ, Y, 'e', rhs_target)
-            dX = _reduce_grad(dX, X_shape)
-        else:
-            dX = None
-        if op != 'copy_lhs' and ctx.needs_input_grad[3]:
-            if rhs_target in ['u', 'v']:
-                _gidx = gidx if rhs_target == 'v' else gidx.reverse()
-                if op in ['add', 'copy_rhs']:
-                    dY = gspmm(_gidx, 'copy_rhs', 'sum', None, dZ)
-                else:  # mul, dot
-                    if lhs_target == rhs_target:
-                        dY = gspmm(_gidx, 'copy_rhs', 'sum', None, dZ) * X
-                    elif lhs_target == 'e':
-                        dY = gspmm(_gidx, 'copy_rhs', 'sum', None, dZ * X)
-                    else:  # rhs_target = !lhs_target
-                        dY = gspmm(_gidx, 'mul', 'sum', X, dZ)
+        with dglstreams.stream(th.cuda.current_stream()):
+            gidx, op, lhs_target, rhs_target, X_shape, Y_shape = ctx.backward_cache
+            ctx.backward_cache = None
+            X, Y = ctx.saved_tensors
+            if op != 'copy_rhs' and ctx.needs_input_grad[2]:
+                if lhs_target in ['u', 'v']:
+                    _gidx = gidx if lhs_target == 'v' else gidx.reverse()
+                    if op in ['add', 'copy_lhs']:
+                        dX = gspmm(_gidx, 'copy_rhs', 'sum', None, dZ)
+                    else:  # mul, dot
+                        if rhs_target == lhs_target:
+                            dX = gspmm(_gidx, 'copy_rhs', 'sum', None, dZ) *  Y
+                        elif rhs_target == 'e':
+                            dX = gspmm(_gidx, 'copy_rhs', 'sum', None, dZ * Y)
+                        else:  # rhs_target = !lhs_target
+                            dX = gspmm(_gidx, 'mul', 'sum', Y, dZ)
+                else:  # lhs_target == 'e'
+                    if op in ['add', 'copy_lhs']:
+                        dX = dZ
+                    else:  # mul, dot
+                        dX = gsddmm(gidx, 'mul', dZ, Y, 'e', rhs_target)
+                dX = _reduce_grad(dX, X_shape)
             else:
-                if op in ['add', 'copy_rhs']:
-                    dY = dZ
-                else:  # mul, dot
-                    dY = gsddmm(gidx, 'mul', dZ, X, 'e', lhs_target)
-            dY = _reduce_grad(dY, Y_shape)
-        else:
-            dY = None
-        return None, None, dX, dY, None, None
+                dX = None
+            if op != 'copy_lhs' and ctx.needs_input_grad[3]:
+                if rhs_target in ['u', 'v']:
+                    _gidx = gidx if rhs_target == 'v' else gidx.reverse()
+                    if op in ['add', 'copy_rhs']:
+                        dY = gspmm(_gidx, 'copy_rhs', 'sum', None, dZ)
+                    else:  # mul, dot
+                        if lhs_target == rhs_target:
+                            dY = gspmm(_gidx, 'copy_rhs', 'sum', None, dZ) * X
+                        elif lhs_target == 'e':
+                            dY = gspmm(_gidx, 'copy_rhs', 'sum', None, dZ * X)
+                        else:  # rhs_target = !lhs_target
+                            dY = gspmm(_gidx, 'mul', 'sum', X, dZ)
+                else:
+                    if op in ['add', 'copy_rhs']:
+                        dY = dZ
+                    else:  # mul, dot
+                        dY = gsddmm(gidx, 'mul', dZ, X, 'e', lhs_target)
+                dY = _reduce_grad(dY, Y_shape)
+            else:
+                dY = None
+            return None, None, dX, dY, None, None
 
 
 class GSDDMM_hetero(th.autograd.Function):

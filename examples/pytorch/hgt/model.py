@@ -5,6 +5,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import dgl.function as fn
 from dgl.nn.functional import edge_softmax
+from dgl._ffi import streams as dglstreams
 import nvtx
 
 
@@ -84,7 +85,8 @@ class HGTLayer(nn.Module):
 
                 sub_graph.apply_edges(fn.v_dot_u('q_%d' % e_id, 'k_%d' % e_id, 't'))
                 attn_score = sub_graph.edata.pop('t').sum(-1) * relation_pri / self.sqrt_dk
-                attn_score = edge_softmax(sub_graph, attn_score, norm_by='dst')
+                with nvtx.annotate("edge_softmax", color="purple"):
+                    attn_score = edge_softmax(sub_graph, attn_score, norm_by='dst')
 
                 sub_graph.edata['t'] = attn_score.unsqueeze(-1)
 
@@ -193,50 +195,66 @@ class HGTLayerMultiStream(nn.Module):
                 streams2[ntype] = torch.cuda.Stream()
             for srctype, etype, dsttype in G.canonical_etypes:
                 streams[(srctype, etype, dsttype)] = torch.cuda.Stream()
-            torch.cuda.current_stream().synchronize()
+            #torch.cuda.current_stream().synchronize()
+            torch.cuda.synchronize()
             for srctype, etype, dsttype in G.canonical_etypes:
                 # streams[((srctype, etype, dsttype))].wait_stream(torch.cuda.current_stream())
                 sub_graph = G[srctype, etype, dsttype]
-                with torch.cuda.stream(streams[((srctype, etype, dsttype))]):
-                    k_linear = self.k_linears[node_dict[srctype]]
-                    v_linear = self.v_linears[node_dict[srctype]]
-                    q_linear = self.q_linears[node_dict[dsttype]]
 
-                    k = k_linear(h[srctype]).view(-1, self.n_heads, self.d_k)
-                    v = v_linear(h[srctype]).view(-1, self.n_heads, self.d_k)
-                    q = q_linear(h[dsttype]).view(-1, self.n_heads, self.d_k)
+                with torch.cuda.stream(streams[(srctype, etype, dsttype)]):
+                    with dglstreams.stream(streams[((srctype, etype, dsttype))]):
+                        k_linear = self.k_linears[node_dict[srctype]]
+                        v_linear = self.v_linears[node_dict[srctype]]
+                        q_linear = self.q_linears[node_dict[dsttype]]
 
-                    e_id = self.edge_dict[etype]
+                        k = k_linear(h[srctype]).view(-1, self.n_heads, self.d_k)
+                        v = v_linear(h[srctype]).view(-1, self.n_heads, self.d_k)
+                        q = q_linear(h[dsttype]).view(-1, self.n_heads, self.d_k)
 
-                    relation_att = self.relation_att[e_id]
-                    relation_pri = self.relation_pri[e_id]
-                    relation_msg = self.relation_msg[e_id]
+                        e_id = self.edge_dict[etype]
 
-                    k = torch.einsum("bij,ijk->bik", k, relation_att)
-                    v = torch.einsum("bij,ijk->bik", v, relation_msg)
-                    sub_graph.srcdata['k_%d' % e_id] = k
-                    sub_graph.dstdata['q_%d' % e_id] = q
-                    sub_graph.srcdata['v_%d' % e_id] = v
-                # streams[((srctype, etype, dsttype))].synchronize()
+                        relation_att = self.relation_att[e_id]
+                        relation_pri = self.relation_pri[e_id]
+                        relation_msg = self.relation_msg[e_id]
 
+                        k = torch.einsum("bij,ijk->bik", k, relation_att)
+                        v = torch.einsum("bij,ijk->bik", v, relation_msg)
+                        sub_graph.srcdata['k_%d' % e_id] = k
+                        sub_graph.dstdata['q_%d' % e_id] = q
+                        sub_graph.srcdata['v_%d' % e_id] = v
+                        sub_graph.apply_edges(fn.v_dot_u('q_%d' % e_id, 'k_%d' % e_id, 't_temp'))
+                        attn_score = sub_graph.edata['t_temp'].sum(-1) * relation_pri / self.sqrt_dk
+                        with nvtx.annotate("edge_softmax", color="purple"):
+                            attn_score = edge_softmax(sub_graph, attn_score, norm_by='dst')
+                        sub_graph.edata['t_%d'%e_id] = attn_score.unsqueeze(-1)
+                        #sub_graph.edata['t'] = attn_score.unsqueeze(-1)
+                #dglstreams.stream(streams[((srctype, etype, dsttype))]).ctx.sync()
+                #streams[((srctype, etype, dsttype))].synchronize()
+
+            #torch.cuda.synchronize()
             for stream_key in streams.keys():
-                streams[stream_key].synchronize()
+               streams[stream_key].synchronize()
+               #dglstreams.stream(streams[stream_key]).ctx.sync()
 
-            for srctype, etype, dsttype in G.canonical_etypes:
-                sub_graph = G[srctype, etype, dsttype]
-                e_id = self.edge_dict[etype]
-                sub_graph.apply_edges(fn.v_dot_u('q_%d' % e_id, 'k_%d' % e_id, 't'))
+                # for srctype, etype, dsttype in G.canonical_etypes:
+                #     sub_graph = G[srctype, etype, dsttype]
+                #     e_id = self.edge_dict[etype]
+                #     relation_pri = self.relation_pri[e_id]
+                #     attn_score = sub_graph.edata['t_temp'].sum(-1) * relation_pri / self.sqrt_dk
+                #
+                #     attn_score = edge_softmax(sub_graph, attn_score, norm_by='dst')
+                #     sub_graph.edata['t'] = attn_score.unsqueeze(-1)
 
-                attn_score = sub_graph.edata.pop('t').sum(-1) * relation_pri / self.sqrt_dk
-                attn_score = edge_softmax(sub_graph, attn_score, norm_by='dst')
 
-                sub_graph.edata['t'] = attn_score.unsqueeze(-1)
 
-            G.multi_update_all({etype: (fn.u_mul_e('v_%d' % e_id, 't', 'm'), fn.sum('m', 't')) \
+
+            # for stream_key in streams.keys():
+            #     streams[stream_key].synchronize()
+            G.multi_update_all({etype: (fn.u_mul_e('v_%d' % e_id, 't_%d'%e_id, 'm'), fn.sum('m', 't')) \
                                 for etype, e_id in edge_dict.items()}, cross_reducer='mean')
-
+            torch.cuda.synchronize()
             new_h = {}
-            torch.cuda.current_stream().synchronize()
+            #torch.cuda.current_stream().synchronize()
             for ntype in G.ntypes:
                 '''
                     Step 3: Target-specific Aggregation
@@ -244,17 +262,20 @@ class HGTLayerMultiStream(nn.Module):
                 '''
                 # streams2[ntype].wait_stream(torch.cuda.current_stream())
                 with torch.cuda.stream(streams2[ntype]):
-                    n_id = node_dict[ntype]
-                    alpha = torch.sigmoid(self.skip[n_id])
-                    t = G.nodes[ntype].data['t'].view(-1, self.out_dim)
-                    trans_out = self.drop(self.a_linears[n_id](t))
-                    trans_out = trans_out * alpha + h[ntype] * (1 - alpha)
-                    if self.use_norm:
-                        new_h[ntype] = self.norms[n_id](trans_out)
-                    else:
-                        new_h[ntype] = trans_out
+                    with dglstreams.stream(streams2[ntype]):
+                        n_id = node_dict[ntype]
+                        alpha = torch.sigmoid(self.skip[n_id])
+                        t = G.nodes[ntype].data['t'].view(-1, self.out_dim)
+                        trans_out = self.drop(self.a_linears[n_id](t))
+                        trans_out = trans_out * alpha + h[ntype] * (1 - alpha)
+                        if self.use_norm:
+                            new_h[ntype] = self.norms[n_id](trans_out)
+                        else:
+                            new_h[ntype] = trans_out
             for stream_key in streams2.keys():
-                streams2[stream_key].synchronize()
+               streams2[stream_key].synchronize()
+               #dglstreams.stream(streams2[stream_key]).ctx.sync()
+            #torch.cuda.synchronize()
             return new_h
 
 
