@@ -15,7 +15,7 @@ import nvtx
 
 from ogb.nodeproppred import NodePropPredDataset
 import numpy as np
-
+# from pytorch_memlab import MemReporter
 dataset = NodePropPredDataset(name='ogbn-mag')
 
 torch.manual_seed(0)
@@ -171,6 +171,20 @@ for ntype in G.ntypes:
 
 G = G.to(device)
 
+# import numpy
+# #with open("writing_coo_1.npy",'wb') as fd:
+# numpy.save("writing_coo_2.npy",numpy.array([srcs_or_dsts.tolist() for srcs_or_dsts in G.edges(etype='writing')],dtype=numpy.int32))
+# #with open("cited_coo_1.npy",'wb') as fd:
+# numpy.save("cited_coo_2.npy",numpy.array([srcs_or_dsts.tolist() for srcs_or_dsts in G.edges(etype='cited')],dtype=numpy.int32))
+# #with open("citing_coo_1.npy",'wb') as fd:
+# numpy.save("citing_coo_2.npy",numpy.array([srcs_or_dsts.tolist() for srcs_or_dsts in G.edges(etype='citing')],dtype=numpy.int32))
+# #with open("is-about_coo_1.npy",'wb') as fd:
+# numpy.save("is-about_coo_2.npy",numpy.array([srcs_or_dsts.tolist() for srcs_or_dsts in G.edges(etype='is-about')],dtype=numpy.int32))
+# #with open("written-by_coo_1.npy",'wb') as fd:
+# numpy.save("written-by_coo_2.npy",numpy.array([srcs_or_dsts.tolist() for srcs_or_dsts in G.edges(etype='written-by')],dtype=numpy.int32))
+# #with open("has_coo_1.npy",'wb') as fd:
+# numpy.save("has_coo_2.npy",numpy.array([srcs_or_dsts.tolist() for srcs_or_dsts in G.edges(etype='has')],dtype=numpy.int32))
+
 if args.multi_stream:
     print("multi-stream enabled!")
     model = HGTMultiStream(G,
@@ -227,3 +241,5 @@ optimizer = torch.optim.AdamW(model.parameters())
 scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, total_steps=args.n_epoch, max_lr=args.max_lr)
 print('Training MLP with #param: %d' % (get_n_params(model)))
 train(model, G)
+#reporter = MemReporter()
+#reporter.report()

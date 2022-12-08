@@ -12,8 +12,10 @@ import numpy as np
 from model import *
 import argparse
 import nvtx
-
+#import random
+#random.seed(0)
 torch.manual_seed(0)
+#dgl.seed(0)
 data_url = 'https://data.dgl.ai/dataset/ACM.mat'
 data_file_path = r'D:\external-repos\dgl\examples\pytorch\hgt\ACM.mat'
 # data_file_path = '/tmp/ACM.mat'
@@ -28,7 +30,7 @@ parser.add_argument('--n_hid', type=int, default=256)
 parser.add_argument('--n_inp', type=int, default=256)
 parser.add_argument('--clip', type=int, default=1.0)
 parser.add_argument('--max_lr', type=float, default=1e-3)
-parser.add_argument('--multi_stream', type=bool, default=True)
+parser.add_argument('--multi_stream', type=bool, default=False)
 
 args = parser.parse_args()
 
