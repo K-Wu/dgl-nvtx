@@ -7,7 +7,7 @@ import networkx as nx
 
 from . import backend as F
 from . import heterograph_index
-from .heterograph import DGLHeteroGraph, combine_frames, DGLBlock
+from .heterograph import DGLGraph, combine_frames, DGLBlock
 from . import graph_index
 from . import utils
 from .base import NTYPE, ETYPE, NID, EID, DGLError, dgl_warning
@@ -29,6 +29,8 @@ __all__ = [
     'from_networkx',
     'bipartite_from_networkx',
     'to_networkx',
+    'from_cugraph',
+    'to_cugraph'
 ]
 
 def graph(data,
@@ -222,7 +224,7 @@ def hetero_from_shared_memory(name):
     HeteroGraph (in shared memory)
     """
     g, ntypes, etypes = heterograph_index.create_heterograph_from_shared_memory(name)
-    return DGLHeteroGraph(g, ntypes, etypes)
+    return DGLGraph(g, ntypes, etypes)
 
 def heterograph(data_dict,
                 num_nodes_dict=None,
@@ -376,7 +378,7 @@ def heterograph(data_dict,
     # create graph index
     hgidx = heterograph_index.create_heterograph_from_relations(
         metagraph, [rgrh._graph for rgrh in rel_graphs], num_nodes_per_type)
-    retg = DGLHeteroGraph(hgidx, ntypes, etypes)
+    retg = DGLGraph(hgidx, ntypes, etypes)
 
     return retg.to(device)
 
@@ -610,7 +612,7 @@ def block_to_graph(block):
     """
     new_types = [ntype + '_src' for ntype in block.srctypes] + \
                 [ntype + '_dst' for ntype in block.dsttypes]
-    retg = DGLHeteroGraph(block._graph, new_types, block.etypes)
+    retg = DGLGraph(block._graph, new_types, block.etypes)
 
     for srctype in block.srctypes:
         retg.nodes[srctype + '_src'].data.update(block.srcnodes[srctype].data)
@@ -794,7 +796,7 @@ def to_heterogeneous(G, ntypes, etypes, ntype_field=NTYPE,
         data_dict[canonical_etypes[-1]] = \
             (src_of_etype, dst_of_etype)
     hg = heterograph(data_dict,
-                     {ntype: count for ntype, count in zip(ntypes, ntype_count)},
+                     dict(zip(ntypes, ntype_count)),
                      idtype=idtype, device=device)
 
     ntype2ngrp = {ntype : node_groups[ntid] for ntid, ntype in enumerate(ntypes)}
@@ -1618,7 +1620,111 @@ def to_networkx(g, node_attrs=None, edge_attrs=None):
             attr.update({key: F.squeeze(feat_dict[key], 0) for key in edge_attrs})
     return nx_graph
 
-DGLHeteroGraph.to_networkx = to_networkx
+DGLGraph.to_networkx = to_networkx
+
+def to_cugraph(g):
+    """Convert a DGL graph to a :class:`cugraph.Graph` and return.
+
+    Parameters
+    ----------
+    g : DGLGraph
+        A homogeneous graph.
+
+    Returns
+    -------
+    cugraph.Graph
+        The converted cugraph graph.
+
+    Notes
+    -----
+    The function only supports GPU graph input.
+
+    Examples
+    --------
+    The following example uses PyTorch backend.
+
+    >>> import dgl
+    >>> import cugraph
+    >>> import torch
+
+    >>> g = dgl.graph((torch.tensor([1, 2]), torch.tensor([1, 3]))).to('cuda')
+    >>> cugraph_g = g.to_cugraph()
+    >>> cugraph_g.edges()
+        src  dst
+    0    2    3
+    1    1    1
+    """
+
+    if g.device.type != 'cuda':
+        raise DGLError(f"Cannot convert a {g.device.type} graph to cugraph." +
+                        "Call g.to('cuda') first.")
+    if not g.is_homogeneous:
+        raise DGLError("dgl.to_cugraph only supports homogeneous graphs.")
+
+    try:
+        import cugraph
+        import cudf
+    except ModuleNotFoundError:
+        raise ModuleNotFoundError("to_cugraph requires cugraph which could not be imported")
+
+    edgelist = g.edges()
+    src_ser = cudf.from_dlpack(F.zerocopy_to_dlpack(edgelist[0]))
+    dst_ser = cudf.from_dlpack(F.zerocopy_to_dlpack(edgelist[1]))
+    cudf_data = cudf.DataFrame({'source':src_ser, 'destination':dst_ser})
+    g_cugraph = cugraph.Graph(directed=True)
+    g_cugraph.from_cudf_edgelist(cudf_data,
+                                 source='source',
+                                 destination='destination')
+    return g_cugraph
+
+DGLGraph.to_cugraph = to_cugraph
+
+def from_cugraph(cugraph_graph):
+    """Create a graph from a :class:`cugraph.Graph` object.
+
+    Parameters
+    ----------
+    cugraph_graph : cugraph.Graph
+        The cugraph graph object holding the graph structure. Node and edge attributes are
+        dropped.
+
+        If the input graph is undirected, DGL converts it to a directed graph
+        by :func:`cugraph.Graph.to_directed`.
+
+    Returns
+    -------
+    DGLGraph
+        The created graph.
+
+    Examples
+    --------
+
+    The following example uses PyTorch backend.
+
+    >>> import dgl
+    >>> import cugraph
+    >>> import cudf
+
+    Create a cugraph graph.
+    >>> cugraph_g = cugraph.Graph(directed=True)
+    >>> df = cudf.DataFrame({"source":[0, 1, 2, 3],
+                     "destination":[1, 2, 3, 0]})
+    >>> cugraph_g.from_cudf_edgelist(df)
+
+    Convert it into a DGLGraph
+    >>> g = dgl.from_cugraph(cugraph_g)
+    >>> g.edges()
+    (tensor([1, 2, 3, 0], device='cuda:0'), tensor([2, 3, 0, 1], device='cuda:0'))
+    """
+    if not cugraph_graph.is_directed():
+        cugraph_graph = cugraph_graph.to_directed()
+
+    edges = cugraph_graph.edges()
+    src_t = F.zerocopy_from_dlpack(edges['src'].to_dlpack())
+    dst_t = F.zerocopy_from_dlpack(edges['dst'].to_dlpack())
+    g = graph((src_t,dst_t))
+
+    return g
 
 ############################################################
 # Internal APIs
@@ -1660,7 +1766,7 @@ def create_from_edges(sparse_fmt, arrays,
 
     Returns
     -------
-    DGLHeteroGraph
+    DGLGraph
     """
     if utype == vtype:
         num_ntypes = 1
@@ -1678,6 +1784,6 @@ def create_from_edges(sparse_fmt, arrays,
             num_ntypes, urange, vrange, indptr, indices, eids, ['coo', 'csr', 'csc'],
             sparse_fmt == 'csc')
     if utype == vtype:
-        return DGLHeteroGraph(hgidx, [utype], [etype])
+        return DGLGraph(hgidx, [utype], [etype])
     else:
-        return DGLHeteroGraph(hgidx, [utype, vtype], [etype])
+        return DGLGraph(hgidx, [utype, vtype], [etype])

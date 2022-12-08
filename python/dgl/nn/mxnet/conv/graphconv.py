@@ -10,12 +10,10 @@ from ....base import DGLError
 from ....utils import expand_as_pair
 
 class GraphConv(gluon.Block):
-    r"""
+    r"""Graph convolutional layer from `Semi-Supervised Classification with Graph Convolutional
+    Networks <https://arxiv.org/abs/1609.02907>`__
 
-    Description
-    -----------
-    Graph convolution was introduced in `GCN <https://arxiv.org/abs/1609.02907>`__
-    and mathematically is defined as follows:
+    Mathematically it is defined as follows:
 
     .. math::
       h_i^{(l+1)} = \sigma(b^{(l)} + \sum_{j\in\mathcal{N}(i)}\frac{1}{c_{ij}}h_j^{(l)}W^{(l)})
@@ -263,13 +261,13 @@ class GraphConv(gluon.Block):
                 if weight is not None:
                     feat_src = mx.nd.dot(feat_src, weight)
                 graph.srcdata['h'] = feat_src
-                graph.update_all(fn.copy_src(src='h', out='m'),
+                graph.update_all(fn.copy_u(u='h', out='m'),
                                  fn.sum(msg='m', out='h'))
                 rst = graph.dstdata.pop('h')
             else:
                 # aggregate first then mult W
                 graph.srcdata['h'] = feat_src
-                graph.update_all(fn.copy_src(src='h', out='m'),
+                graph.update_all(fn.copy_u(u='h', out='m'),
                                  fn.sum(msg='m', out='h'))
                 rst = graph.dstdata.pop('h')
                 if weight is not None:

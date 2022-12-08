@@ -40,7 +40,7 @@ class DGLBaseGraph(object):
         Data to initialize graph.
     """
 
-    is_block = False        # for compatibility with DGLHeteroGraph
+    is_block = False        # for compatibility with DGLGraph
 
     def __init__(self, graph):
         self._graph = graph
@@ -3083,10 +3083,10 @@ class DGLGraph(DGLBaseGraph):
         >>> g.add_nodes(3)
         >>> g.ndata['x'] = th.tensor([[0.], [1.], [2.]])
 
-        Use the built-in message function :func:`~dgl.function.copy_src` for copying
+        Use the built-in message function :func:`~dgl.function.copy_u` for copying
         node features as the message.
 
-        >>> m_func = dgl.function.copy_src('x', 'm')
+        >>> m_func = dgl.function.copy_u('x', 'm')
         >>> g.register_message_func(m_func)
 
         Use the built-int message reducing function :func:`~dgl.function.sum`, which
@@ -3180,10 +3180,10 @@ class DGLGraph(DGLBaseGraph):
         >>> g.add_nodes(3)
         >>> g.ndata['x'] = th.tensor([[1.], [2.], [3.]])
 
-        Use the built-in message function :func:`~dgl.function.copy_src` for copying
+        Use the built-in message function :func:`~dgl.function.copy_u` for copying
         node features as the message.
 
-        >>> m_func = dgl.function.copy_src('x', 'm')
+        >>> m_func = dgl.function.copy_u('x', 'm')
         >>> g.register_message_func(m_func)
 
         Use the built-int message reducing function :func:`~dgl.function.sum`, which
@@ -3692,14 +3692,14 @@ class DGLGraph(DGLBaseGraph):
     def line_graph(self, backtracking=True, shared=False):
         """Return the line graph of this graph.
 
-        See :func:`~dgl.transform.line_graph`.
+        See :func:`~dgl.transforms.line_graph`.
         """
         return dgl.line_graph(self, backtracking, shared)
 
     def reverse(self, share_ndata=False, share_edata=False):
         """Return the reverse of this graph.
 
-        See :func:`~dgl.transform.reverse`.
+        See :func:`~dgl.transforms.reverse`.
         """
         return dgl.reverse(self, share_ndata, share_edata)
 
