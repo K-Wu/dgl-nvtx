@@ -1,3 +1,10 @@
+*.pth
+*.qdrep
+*.npy
+*.ncu-rep
+*.gpickle
+dataset/
+
 # IDE
 .idea
 

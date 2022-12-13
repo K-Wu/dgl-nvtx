@@ -138,7 +138,6 @@ for ntype in G.ntypes:
 
 G = G.to(device)
 
-
 if args.multi_stream:
     print("multi-stream enabled!")
     model = HGTMultiStream(G,
