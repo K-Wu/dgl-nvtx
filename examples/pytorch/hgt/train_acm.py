@@ -54,15 +54,18 @@ def train(model, G):
     train_step = torch.tensor(0)
     for epoch in np.arange(args.n_epoch) + 1:
         model.train()
-        logits = model(G, "paper")
-        # The loss is computed only for labeled nodes.
-        loss = F.cross_entropy(logits[train_idx], labels[train_idx].to(device))
-        optimizer.zero_grad()
-        with nvtx.annotate("backward", color="purple"):
-            loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
-        with nvtx.annotate("optimizer.step", color="purple"):
-            optimizer.step()
+        with torch.cuda.profiler.profile():
+            with torch.autograd.profiler.emit_nvtx():
+                logits = model(G, "paper")
+                # The loss is computed only for labeled nodes.
+                loss = F.cross_entropy(logits[train_idx], labels[train_idx].to(device))
+                optimizer.zero_grad()
+        
+                with nvtx.annotate("backward", color="purple"):
+                    loss.backward()
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
+                with nvtx.annotate("optimizer.step", color="purple"):
+                    optimizer.step()
         train_step += 1
         scheduler.step(train_step)
         if epoch % 5 == 0:
@@ -103,6 +106,9 @@ G = dgl.heterograph(
     }
 )
 print(G)
+# print the number of nodes and edges in each type
+print({ntype: G.number_of_nodes(ntype) for ntype in G.ntypes})
+print({etype: G.number_of_edges(etype) for etype in G.etypes})
 
 pvc = data["PvsC"].tocsr()
 p_selected = pvc.tocoo()
